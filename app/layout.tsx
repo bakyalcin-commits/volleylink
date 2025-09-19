@@ -3,8 +3,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'StartingFive',
-  description: 'Basketbol yetenek ağı'
+  title: 'VolleyLink',
+  description: 'Voleybol Yetenek Ağı'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -16,11 +16,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="container">
           <nav>
-            <Link href="/" aria-label="StartingFive anasayfa"
+            <Link href="/" aria-label="VolleyLink anasayfa"
               style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Image
-                src="/logo-startingfive.png"
-                alt="StartingFive"
+                src="/volleylink.png"
+                alt="VolleyLink"
                 width={200}   // gerekirse 140–180 arası oynat
                 height={40}
                 priority
@@ -38,7 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {children}
 
-          <footer>© StartingFive — Beta</footer>
+          <footer>© VolleyLink — Beta</footer>
         </div>
       </body>
     </html>
