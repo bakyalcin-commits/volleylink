@@ -15,7 +15,7 @@ export default function HomePage() {
             Oyununla kendini göster. <span>Keşfedil.</span>
           </h1>
           <p className="p">
-            Basketbol CV’n: Video + istatistik + pozisyon. Kulüpler ve federasyonlar seni buradan bulsun.
+            Voleybol CV’n: Video + istatistik + pozisyon. Kulüpler ve federasyonlar seni buradan bulsun.
           </p>
           <div style={{display:'flex',gap:12,marginTop:18}}>
             <a className="button primary" href="#upload">Profilini Oluştur</a>
