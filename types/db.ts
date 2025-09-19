@@ -1,6 +1,6 @@
 // types/db.ts
 export type Gender = 'male' | 'female';
-export type Position = 'PG' | 'SG' | 'SF' | 'PF' | 'C';
+export type Position = 'S' | 'OH' | 'OPP' | 'MB' | 'L' | 'DS';
 
 export type Profile = {
   id: string | null;
