@@ -1,11 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import UploadForm from '@/components/UploadForm';
 import DiscoverGrid from '@/components/DiscoverGrid';
+import type { Position } from '@/types/db';
+import { POSITIONS } from '@/lib/positions';
 
 export default function HomePage() {
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // (İstersen ileride arama state’lerini buraya bağlayabilirsin)
+  const [position, setPosition] = useState<Position | ''>('');
+  const [gender, setGender] = useState<'male' | 'female' | ''>('');
 
   return (
     <>
@@ -27,17 +33,27 @@ export default function HomePage() {
         <div className="card">
           <div className="row">
             <input className="input" placeholder="Ad / Şehir" />
-            <select className="input" defaultValue="">
+            <select
+              className="input"
+              value={position}
+              onChange={(e)=>setPosition(e.target.value as Position | '')}
+            >
               <option value="">Pozisyon</option>
-              <option>PG</option><option>SG</option><option>SF</option><option>PF</option><option>C</option>
+              {POSITIONS.map(p => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
             </select>
           </div>
+
           <div className="row" style={{marginTop:10}}>
-            <select className="input" defaultValue="">
+            <select
+              className="input"
+              value={gender}
+              onChange={(e)=>setGender(e.target.value as 'male' | 'female' | '')}
+            >
               <option value="">Cinsiyet</option>
               <option value="male">Erkek</option>
               <option value="female">Kadın</option>
-              <option value="other">Diğer</option>
             </select>
             <select className="input" defaultValue="">
               <option value="">Ülke</option>
@@ -46,15 +62,14 @@ export default function HomePage() {
               <option value="DE">Almanya</option>
             </select>
           </div>
+
           <button className="button" style={{marginTop:12,width:'100%'}}>İleri Arama</button>
         </div>
       </section>
 
       <section id="upload" className="card" style={{marginTop:16}}>
         <h3 style={{margin:'6px 0 12px'}}>İlk videonu yükle</h3>
-        <UploadForm
-          onUploaded={() => setRefreshKey(k => k + 1)}
-        />
+        <UploadForm onUploaded={() => setRefreshKey(k => k + 1)} />
       </section>
 
       <section id="discover" style={{marginTop:22}}>
