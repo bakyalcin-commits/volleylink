@@ -1,17 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import UploadForm from '@/components/UploadForm';
 import DiscoverGrid from '@/components/DiscoverGrid';
+import AuthBox from '@/components/AuthBox';
+import { supabase } from '@/lib/supabaseClient';
 import type { Position } from '@/types/db';
 import { POSITIONS } from '@/lib/positions';
 
 export default function HomePage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // (İstersen ileride arama state’lerini buraya bağlayabilirsin)
+  // arama (mock)
   const [position, setPosition] = useState<Position | ''>('');
   const [gender, setGender] = useState<'male' | 'female' | ''>('');
+
+  // ► GİRİŞ KONTROLÜ
+  const [userId, setUserId] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (mounted) setUserId(data.session?.user?.id ?? null);
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      setUserId(s?.user?.id ?? null);
+    });
+    return () => { sub.subscription.unsubscribe(); mounted = false; };
+  }, []);
 
   return (
     <>
@@ -29,7 +45,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Sağ panel: basit arama mockup */}
+        {/* Sağ panel: arama mockup */}
         <div className="card">
           <div className="row">
             <input className="input" placeholder="Ad / Şehir" />
@@ -69,7 +85,18 @@ export default function HomePage() {
 
       <section id="upload" className="card" style={{marginTop:16}}>
         <h3 style={{margin:'6px 0 12px'}}>İlk videonu yükle</h3>
-        <UploadForm onUploaded={() => setRefreshKey(k => k + 1)} />
+
+        {/* ► GİRİŞ YOKSA: AuthBox göster, formu kapat */}
+        {!userId ? (
+          <>
+            <div className="p" style={{marginBottom:8}}>
+              Videonu yüklemek ve profil oluşturmak için lütfen giriş yap.
+            </div>
+            <AuthBox onLoggedIn={() => setRefreshKey(k => k + 1)} />
+          </>
+        ) : (
+          <UploadForm onUploaded={() => setRefreshKey(k => k + 1)} />
+        )}
       </section>
 
       <section id="discover" style={{marginTop:22}}>
