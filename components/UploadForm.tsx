@@ -7,6 +7,16 @@ import AuthBox from './AuthBox';
 
 type Props = { onUploaded?: () => void };
 
+// Tek kaynak: Voleybol pozisyonları
+const POSITIONS: { value: Position; label: string }[] = [
+  { value: 'S',   label: 'Pasör (S)' },
+  { value: 'OPP', label: 'Pasör Çaprazı (OPP)' },
+  { value: 'OH',  label: 'Smaçör (OH)' },
+  { value: 'MB',  label: 'Orta Oyuncu (MB)' },
+  { value: 'L',   label: 'Libero (L)' },
+  { value: 'DS',  label: 'Defans Uzmanı (DS)' },
+];
+
 export default function UploadForm({ onUploaded }: Props) {
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
 
@@ -54,8 +64,8 @@ export default function UploadForm({ onUploaded }: Props) {
     const payload = {
       id: userId,
       full_name: fullName || null,
-      gender: (gender || null) as any,
-      position: (position || null) as any,
+      gender: (gender || null) as Gender | null,
+      position: (position || null) as Position | null,
       birth_date: birthDate || null,
       height_cm: heightCm === '' ? null : Number(heightCm),
       weight_kg: weightKg === '' ? null : Number(weightKg),
@@ -107,8 +117,8 @@ export default function UploadForm({ onUploaded }: Props) {
         storage_path: path,
         public_url: publicUrl,
         thumbnail_url: null,
-        position,
-        gender,
+        position: position as Position, // tip güvence
+        gender: gender as Gender,
         city,
         country,
         age,
@@ -142,7 +152,7 @@ export default function UploadForm({ onUploaded }: Props) {
     <form onSubmit={handleUpload} style={{display:'grid',gap:12}}>
       <div className="row">
         <input className="input" placeholder="Ad Soyad *" value={fullName} onChange={e=>setFullName(e.target.value)} />
-        <select className="input" value={gender} onChange={e=>setGender(e.target.value as any)}>
+        <select className="input" value={gender} onChange={e=>setGender(e.target.value as Gender | '')}>
           <option value="">Cinsiyet *</option>
           <option value="male">Erkek</option>
           <option value="female">Kadın</option>
@@ -150,9 +160,11 @@ export default function UploadForm({ onUploaded }: Props) {
       </div>
 
       <div className="row">
-        <select className="input" value={position} onChange={e=>setPosition(e.target.value as any)}>
+        <select className="input" value={position} onChange={e=>setPosition(e.target.value as Position | '')}>
           <option value="">Pozisyon *</option>
-          <option>PG</option><option>SG</option><option>SF</option><option>PF</option><option>C</option>
+          {POSITIONS.map(p => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
         </select>
         <input className="input" type="date" value={birthDate} onChange={e=>setBirthDate(e.target.value)} />
       </div>
