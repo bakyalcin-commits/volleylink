@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import type { VideoRow, Position } from '@/types/db';
 
@@ -19,6 +19,7 @@ type Row = (VideoRow & { club?: string }) & {
   like_count?: number;
   my_like?: boolean;
   comments?: { id:number; user_id:string|null; content:string; created_at:string }[];
+  playable_url?: string;
 };
 
 export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
@@ -26,13 +27,14 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const alive = useRef(true);
 
   useEffect(() => {
-    let mounted = true;
+    alive.current = true;
     (async () => {
       const { data } = await supabase.auth.getSession();
       const uid = data.session?.user?.id ?? null;
-      if (mounted) setMyId(uid);
+      if (alive.current) setMyId(uid);
 
       if (uid) {
         const { data: adminHit } = await supabase
@@ -40,13 +42,16 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
           .select('user_id')
           .eq('user_id', uid)
           .maybeSingle();
-        if (mounted) setIsAdmin(!!adminHit);
+        if (alive.current) setIsAdmin(!!adminHit);
+      } else {
+        if (alive.current) setIsAdmin(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => { alive.current = false; };
   }, []);
 
   async function load() {
+    if (!alive.current) return;
     setLoading(true);
 
     // 1) DB'den son videoları al
@@ -55,21 +60,37 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
       .select('*')
       .order('created_at', { ascending: false })
       .limit(24);
-    if (error) { console.error(error); setRows([] as any); setLoading(false); return; }
 
-    // 1.5) Basketbol kalıntılarını ayıkla (PG/SG/SF/PF/C veya geçersiz null-string)
+    if (error) {
+      console.error(error);
+      if (alive.current) { setRows([] as any); setLoading(false); }
+      return;
+    }
+
+    // 1.5) Voleybol pozisyonları dışında kalanları ve path'i olmayanları çıkar
     const validSet = new Set<Position>(['S','OPP','OH','MB','L','DS']);
-    const sanitized = (vids ?? []).filter(v => v.position ? validSet.has(v.position as Position) : true) as Row[];
+    const sanitized = (vids ?? []).filter(v => {
+      const posOk = v.position ? validSet.has(v.position as Position) : true;
+      const hasPath = !!v.storage_path && typeof v.storage_path === 'string';
+      return posOk && hasPath;
+    }) as Row[];
 
-    // 2) Storage'ta gerçekten var mı? (yoksa listeye hiç sokma)
+    // 2) Storage'ta gerçekten var mı? + playable_url oluştur
     const existenceChecked = await Promise.all(
       sanitized.map(async (v) => {
-        const { error: e } = await supabase.storage
-          .from('videos')
-          .createSignedUrl(v.storage_path, 60);
-        // obje yoksa null döndür
-        if (e) return null;
-        return v as Row;
+        try {
+          const { data: signed, error: e } = await supabase
+            .storage
+            .from('videos')
+            .createSignedUrl(v.storage_path!, 60);
+          if (e) return null;
+          const playable_url = signed?.signedUrl ?? v.public_url ?? null;
+          if (!playable_url) return null;
+          return { ...v, playable_url } as Row;
+        } catch (err) {
+          console.warn('signedUrl err:', err);
+          return null;
+        }
       })
     );
     const existing = existenceChecked.filter(Boolean) as Row[];
@@ -77,30 +98,44 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
     // 3) Like sayıları ve benim like durumum
     if (existing.length) {
       const ids = existing.map(v => v.id);
-      const { data: counts } = await supabase
+      const { data: counts, error: likeErr } = await supabase
         .from('video_likes')
         .select('video_id, is_like')
         .in('video_id', ids);
 
-      const { data: mine } = myId ? await supabase
-        .from('video_likes')
-        .select('video_id')
-        .eq('user_id', myId) : { data: [] as any };
+      if (likeErr) console.error(likeErr);
+
+      let mine: { video_id:number }[] = [];
+      if (myId) {
+        const { data: mineRows, error: mineErr } = await supabase
+          .from('video_likes')
+          .select('video_id')
+          .eq('user_id', myId);
+        if (mineErr) console.error(mineErr);
+        mine = mineRows ?? [];
+      }
 
       const likeMap = new Map<number, number>();
       (counts ?? []).forEach(r => {
         if (r.is_like) likeMap.set(r.video_id, (likeMap.get(r.video_id) ?? 0) + 1);
       });
 
-      const mySet = new Set<number>((mine ?? []).map((m:any) => m.video_id));
+      const mySet = new Set<number>(mine.map(m => m.video_id));
       existing.forEach(v => {
         v.like_count = likeMap.get(v.id) ?? 0;
         v.my_like = mySet.has(v.id);
       });
     }
 
+    if (!alive.current) return;
+
+    // 4) Listeyi göster
     setRows(existing);
     setLoading(false);
+
+    // 5) Yorumları videoyu oynatmadan yükle (arka planda, her video için)
+    //    Burada N sorgu olur ama limit 24 olduğu için makul. İstersen RPC ile tek sorguda gruplayabiliriz.
+    existing.forEach(v => { fetchComments(v.id); });
   }
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [refreshKey, myId]);
@@ -112,7 +147,7 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
         video_id: videoId,
         user_id: myId,
         is_like: true
-      });
+      }, { onConflict: 'video_id,user_id' });
       if (error) console.error(error);
     } else {
       const { error } = await supabase.from('video_likes')
@@ -126,23 +161,25 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
 
   async function addComment(videoId: number, content: string) {
     if (!myId) { alert('Yorum için giriş yap.'); return; }
-    if (!content.trim()) return;
+    const trimmed = content.trim();
+    if (!trimmed) return;
     const { error } = await supabase.from('video_comments').insert({
       video_id: videoId,
       user_id: myId,
-      content
+      content: trimmed
     });
     if (error) console.error(error);
     await fetchComments(videoId);
   }
 
   async function fetchComments(videoId: number) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('video_comments')
       .select('id, user_id, content, created_at')
       .eq('video_id', videoId)
       .order('created_at', { ascending: false })
       .limit(10);
+    if (error) console.error(error);
     setRows(prev => prev.map(r => r.id === videoId ? { ...r, comments: data ?? [] } : r));
   }
 
@@ -153,8 +190,10 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
     if (!confirm('Videoyu silmek istediğine emin misin?')) return;
 
     // Storage → DB
-    const { error: delObj } = await supabase.storage.from('videos').remove([v.storage_path]);
-    if (delObj) console.warn('storage remove:', delObj?.message ?? delObj);
+    if (v.storage_path) {
+      const { error: delObj } = await supabase.storage.from('videos').remove([v.storage_path]);
+      if (delObj) console.warn('storage remove:', delObj?.message ?? delObj);
+    }
     const { error: delRow } = await supabase.from('videos').delete().eq('id', v.id);
     if (delRow) console.error(delRow);
 
@@ -170,11 +209,10 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
         <div key={v.id} className="card">
           <div className="video-thumb">
             <video
-              src={`${v.public_url}?t=${encodeURIComponent(v.created_at)}`} // hafif cache-bypass
+              src={`${(v.playable_url ?? v.public_url) ?? ''}?t=${encodeURIComponent(v.created_at ?? '')}`}
               controls
               preload="metadata"
               style={{width:'100%',height:'100%',objectFit:'cover',display:'block',background:'#000'}}
-              onPlay={()=>{ if (!v.comments) fetchComments(v.id); }}
             />
           </div>
 
