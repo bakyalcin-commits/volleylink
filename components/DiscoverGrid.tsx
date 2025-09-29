@@ -19,8 +19,16 @@ type Row = (VideoRow & { club?: string }) & {
   like_count?: number;
   my_like?: boolean;
   comments?: { id:number; user_id:string|null; content:string; created_at:string }[];
-  playable_url?: string;
+  playable_url?: string; // signed/public kaynak
 };
+
+// Cache-bypass paramını doğru şekilde eklemek için helper
+function withBypass(u: string | null | undefined, createdAt?: string | null) {
+  if (!u) return '';
+  const sep = u.includes('?') ? '&' : '?';
+  const t = encodeURIComponent(createdAt ?? '');
+  return `${u}${sep}t=${t}`;
+}
 
 export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -75,15 +83,15 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
       return posOk && hasPath;
     }) as Row[];
 
-    // 2) Storage'ta gerçekten var mı? + playable_url oluştur
+    // 2) Storage'ta gerçekten var mı? + playable_url oluştur (TTL 3600 sn)
     const existenceChecked = await Promise.all(
       sanitized.map(async (v) => {
         try {
           const { data: signed, error: e } = await supabase
             .storage
             .from('videos')
-            .createSignedUrl(v.storage_path!, 60);
-          if (e) return null;
+            .createSignedUrl(v.storage_path!, 3600); // 1 saat
+          if (e) return null; // obje yoksa at
           const playable_url = signed?.signedUrl ?? v.public_url ?? null;
           if (!playable_url) return null;
           return { ...v, playable_url } as Row;
@@ -134,7 +142,6 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
     setLoading(false);
 
     // 5) Yorumları videoyu oynatmadan yükle (arka planda, her video için)
-    //    Burada N sorgu olur ama limit 24 olduğu için makul. İstersen RPC ile tek sorguda gruplayabiliriz.
     existing.forEach(v => { fetchComments(v.id); });
   }
 
@@ -209,7 +216,7 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
         <div key={v.id} className="card">
           <div className="video-thumb">
             <video
-              src={`${(v.playable_url ?? v.public_url) ?? ''}?t=${encodeURIComponent(v.created_at ?? '')}`}
+              src={withBypass(v.playable_url ?? v.public_url, v.created_at)}
               controls
               preload="metadata"
               style={{width:'100%',height:'100%',objectFit:'cover',display:'block',background:'#000'}}
