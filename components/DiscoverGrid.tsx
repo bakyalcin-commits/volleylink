@@ -1,7 +1,18 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import type { VideoRow } from '@/types/db';
+import type { VideoRow, Position } from '@/types/db';
+
+// Kod -> Etiket eşlemesi (tek kaynak)
+const POSITION_LABELS: Record<Position, string> = {
+  S:   'Pasör (S)',
+  OPP: 'Pasör Çaprazı (OPP)',
+  OH:  'Smaçör (OH)',
+  MB:  'Orta Oyuncu (MB)',
+  L:   'Libero (L)',
+  DS:  'Defans Uzmanı (DS)',
+};
 
 // Row tipini genişlettik
 type Row = (VideoRow & { club?: string }) & {
@@ -46,9 +57,13 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
       .limit(24);
     if (error) { console.error(error); setRows([] as any); setLoading(false); return; }
 
+    // 1.5) Basketbol kalıntılarını ayıkla (PG/SG/SF/PF/C veya geçersiz null-string)
+    const validSet = new Set<Position>(['S','OPP','OH','MB','L','DS']);
+    const sanitized = (vids ?? []).filter(v => v.position ? validSet.has(v.position as Position) : true) as Row[];
+
     // 2) Storage'ta gerçekten var mı? (yoksa listeye hiç sokma)
     const existenceChecked = await Promise.all(
-      (vids ?? []).map(async (v) => {
+      sanitized.map(async (v) => {
         const { error: e } = await supabase.storage
           .from('videos')
           .createSignedUrl(v.storage_path, 60);
@@ -166,7 +181,11 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
           <div style={{display:'flex',justifyContent:'space-between',marginTop:8,alignItems:'center'}}>
             <div>
               <strong style={{fontSize:14}}>{v.full_name ?? ''}</strong>
-              {v.position ? <span className="badge" style={{marginLeft:8}}>{v.position}</span> : null}
+              {v.position ? (
+                <span className="badge" style={{marginLeft:8}}>
+                  {POSITION_LABELS[v.position as Position] ?? String(v.position)}
+                </span>
+              ) : null}
             </div>
 
             {(myId && (isAdmin || v.user_id === myId)) ? (
