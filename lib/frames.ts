@@ -4,10 +4,28 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-/**
- * temp input mp4 ->  /tmp/frames_xxx -> base64 jpg dizi
- * Basit ve sağlam: ~ her 3 sn'de 1 kare, max N kare, ölçek küçült (768px genişlik)
- */
+function assertNodeRuntime() {
+  // Edge'te process.versions.node yok denecek kadar kısıtlıdır
+  if (typeof process === "undefined" || !process.versions?.node) {
+    throw new Error("FFmpeg sadece Node.js runtime'ta çalışır (Edge değil).");
+  }
+}
+
+async function resolveFfmpegPath(): Promise<string> {
+  assertNodeRuntime();
+  // ffmpeg-static bazı ortamlar için null dönebilir
+  const p = ffmpegPath as unknown as string | null;
+  if (!p) return "ffmpeg"; // eğer sistemde ffmpeg varsa (local dev), fallback
+  // Vercel paketledi mi kontrol edelim
+  try {
+    await fs.access(p);
+    return p;
+  } catch {
+    // Bazen paketlenmiş ama farklı mount noktasında olabilir; yine de deneyelim
+    return p;
+  }
+}
+
 export async function extractJpegFramesBase64(
   inputPath: string,
   opts?: { fps?: string; maxFrames?: number; width?: number }
@@ -19,20 +37,18 @@ export async function extractJpegFramesBase64(
   const outDir = path.join("/tmp", `frames_${Date.now()}`);
   await fs.mkdir(outDir, { recursive: true });
 
-  // ffmpeg komutu:
-  // -vf "fps=1/3,scale=768:-1" ile çerçeve/ölçek
+  const ff = await resolveFfmpegPath();
   const args = [
     "-i", inputPath,
     "-vf", `fps=${fps},scale=${width}:-1`,
     "-qscale:v", "3",
     path.join(outDir, "f_%03d.jpg"),
     "-hide_banner",
-    "-loglevel", "error"
+    "-loglevel", "error",
   ];
 
-  await run(ffmpegPath as string, args);
+  await run(ff, args);
 
-  // dosyaları sırala, maxFrames ile sınırla, base64'e çevir
   const files = (await fs.readdir(outDir))
     .filter(f => f.endsWith(".jpg"))
     .sort()
@@ -45,7 +61,7 @@ export async function extractJpegFramesBase64(
     images.push({
       type: "input_image",
       image_url: `data:image/jpeg;base64,${b64}`,
-      detail: "low", // low = ucuz ve yeterli
+      detail: "low",
     });
   }
   return images;
@@ -56,10 +72,12 @@ function run(cmd: string, args: string[]) {
     const p = spawn(cmd, args);
     let stderr = "";
     p.stderr?.on("data", d => (stderr += d.toString()));
-    p.on("error", reject);
+    p.on("error", (err) => {
+      reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`));
+    });
     p.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(stderr || `ffmpeg exited with code ${code}`));
+      else reject(new Error(stderr || `FFmpeg exit code ${code}`));
     });
   });
 }
