@@ -1,94 +1,60 @@
 // lib/frames.ts
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import * as os from "node:os";
+import { spawn } from "child_process";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
-// FFmpeg'i çalıştır
-function run(cmd: string, args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const p = spawn(cmd, args);
-    let stderr = "";
-    p.stderr?.on("data", d => (stderr += d.toString()));
-    p.on("error", err => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
-    p.on("close", code => (code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`))));
-  });
-}
+const ffmpegPath = ffmpegInstaller.path;
 
-// Platforma uygun ffmpeg yolu (@ffmpeg-installer/ffmpeg)
-async function ffmpegPath(): Promise<string> {
-  const mod = await import("@ffmpeg-installer/ffmpeg"); // dinamik import
-  return (mod as any).path as string;
-}
-
-/**
- * Sahne algılı kare çıkarma:
- * - 2 sn başını atlar (ss)
- * - scene cut ile anlamlı değişimleri seçer
- * - çok karanlık/bozuk kareleri eleyip en fazla maxFrames kare döndürür
- * - base64 JPEG döner (OpenAI vision input_image için)
- */
 export async function extractJpegFramesBase64(
-  inputPath: string,
-  opts?: { maxFrames?: number; width?: number; scene?: number; ss?: number }
-) {
-  const maxFrames = opts?.maxFrames ?? 8;
-  const width = opts?.width ?? 640;
-  const scene = opts?.scene ?? 0.25;
-  const ss = opts?.ss ?? 2;
+  videoPath: string,
+  opts: { fps?: string; maxFrames?: number; width?: number } = {}
+): Promise<{ type: "input_image"; image_url: string }[]> {
+  const { fps = "1", maxFrames = 8, width = 640 } = opts;
 
-  const outDir = path.join(os.tmpdir(), `frames_${Date.now()}`);
-  await fs.mkdir(outDir, { recursive: true });
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-i", videoPath,
+      "-vf", `fps=${fps},scale=${width}:-1`,
+      "-vframes", maxFrames.toString(),
+      "-f", "image2pipe",
+      "-vcodec", "mjpeg",
+      "pipe:1"
+    ];
 
-  const ff = await ffmpegPath();
+    const ffmpeg = spawn(ffmpegPath, args, { stdio: ["ignore", "pipe", "inherit"] });
 
-  // 1) Sahne değişimlerine göre kareler
-  const pattern = path.join(outDir, "f_%04d.jpg");
-  const vf = [`select='gt(scene,${scene})'`, `scale=${width}:-1`, "yadif=0:-1:0"].join(",");
+    const chunks: Buffer[] = [];
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
 
-  await run(ff, [
-    "-ss", String(ss),
-    "-i", inputPath,
-    "-vf", vf,
-    "-vsync", "vfr",
-    "-qscale:v", "3",
-    pattern,
-    "-hide_banner",
-    "-loglevel", "error",
-  ]);
+    ffmpeg.on("error", (err) => reject(err));
 
-  // 2) Karanlık/bozuk kareleri ayıkla
-  const filesAll = (await fs.readdir(outDir)).filter(f => f.endsWith(".jpg")).sort();
-  const kept: string[] = [];
-  for (const f of filesAll) {
-    const p = path.join(outDir, f);
-    const stat = await fs.stat(p);
-    if (stat.size < 10 * 1024) continue; // 10KB altı genelde işe yaramaz
-    kept.push(p);
-    if (kept.length >= maxFrames) break;
-  }
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(`ffmpeg exited with code ${code}`));
+      }
 
-  // 3) Sahne bulunamadıysa fallback: düzenli sampling
-  if (kept.length === 0) {
-    const fallback = path.join(outDir, "r_%04d.jpg");
-    await run(ff, [
-      "-ss", String(ss),
-      "-i", inputPath,
-      "-vf", `fps=2,scale=${width}:-1`,
-      "-qscale:v", "3",
-      fallback,
-      "-hide_banner",
-      "-loglevel", "error",
-    ]);
-    const fb = (await fs.readdir(outDir)).filter(f => f.startsWith("r_")).sort().slice(0, maxFrames);
-    for (const f of fb) kept.push(path.join(outDir, f));
-  }
+      const buffer = Buffer.concat(chunks);
 
-  // 4) base64 JPEG döndür
-  const images: { type: "input_image"; image_url: string; detail: "low" }[] = [];
-  for (const p of kept) {
-    const b = await fs.readFile(p);
-    images.push({ type: "input_image", image_url: `data:image/jpeg;base64,${b.toString("base64")}`, detail: "low" });
-  }
-  return images;
+      // Kareleri ayır (JPEG magic number: ff d8 ff)
+      const frames: Buffer[] = [];
+      let start = -1;
+      for (let i = 0; i < buffer.length - 2; i++) {
+        if (buffer[i] === 0xff && buffer[i + 1] === 0xd8 && buffer[i + 2] === 0xff) {
+          if (start !== -1) {
+            frames.push(buffer.slice(start, i));
+          }
+          start = i;
+        }
+      }
+      if (start !== -1) {
+        frames.push(buffer.slice(start));
+      }
+
+      const base64Frames = frames.map((buf) => ({
+        type: "input_image" as const,
+        image_url: `data:image/jpeg;base64,${buf.toString("base64")}`
+      }));
+
+      resolve(base64Frames);
+    });
+  });
 }
