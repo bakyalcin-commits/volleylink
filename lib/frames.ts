@@ -11,14 +11,20 @@ function assertNodeRuntime() {
 
 async function resolveFfmpegPath(): Promise<string> {
   assertNodeRuntime();
-  // Dinamik import: bundler sabit bir path’e çevirmesin
+  // Dinamik import: build sırasında path hardcode edilmesin
   const mod = await import("ffmpeg-static");
   const p = (mod as any).default as string | null | undefined;
+
   if (p) {
-    try { await fs.access(p); } catch {/* erişilemese de deneyebiliriz */}
+    try {
+      await fs.access(p); // dosya var mı kontrol et
+    } catch {
+      // erişilemezse de yine p dön, ffmpeg-static kendi path'ini halleder
+    }
     return p;
   }
-  // Local dev’de sistem ffmpeg’i
+
+  // local dev ortamında sistem ffmpeg'i fallback
   return "ffmpeg";
 }
 
@@ -26,14 +32,16 @@ export async function extractJpegFramesBase64(
   inputPath: string,
   opts?: { fps?: string; maxFrames?: number; width?: number }
 ) {
-  const fps = opts?.fps ?? "1/3";
-  const maxFrames = opts?.maxFrames ?? 8;
-  const width = opts?.width ?? 768;
+  const fps = opts?.fps ?? "1/3";          // her 3 sn’de 1 kare
+  const maxFrames = opts?.maxFrames ?? 8;  // en fazla 8 kare
+  const width = opts?.width ?? 768;        // boyut
 
   const outDir = path.join("/tmp", `frames_${Date.now()}`);
   await fs.mkdir(outDir, { recursive: true });
 
   const ff = await resolveFfmpegPath();
+  console.log("FFMPEG PATH =>", ff);
+
   const args = [
     "-i", inputPath,
     "-vf", `fps=${fps},scale=${width}:-1`,
@@ -69,6 +77,9 @@ function run(cmd: string, args: string[]) {
     let stderr = "";
     p.stderr?.on("data", d => (stderr += d.toString()));
     p.on("error", (err) => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
-    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`)));
+    p.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `FFmpeg exit code ${code}`));
+    });
   });
 }
