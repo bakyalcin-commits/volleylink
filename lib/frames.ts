@@ -1,104 +1,104 @@
-'use client';
-import { useState } from 'react';
+// lib/frames.ts
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import * as os from "node:os";
 
-type VbReport = { strengths: string[]; issues: string[]; drills: string[] };
-
-export default function AnalyzeInline({ videoId, canForce = false }: { videoId: string; canForce?: boolean }) {
-  const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<VbReport | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const [allowForce, setAllowForce] = useState(false); // rapor boşsa herkese force
-
-  const run = async (force = false) => {
-    setLoading(true); setMsg(null);
-    try {
-      const res = await fetch('/api/analyze-video', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ videoId, force })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || 'Analiz başarısız');
-
-      if (json.from_cache) setMsg('Önceden yapılan analiz gösteriliyor.');
-      if (json.queued) setMsg('Analiz zaten çalışıyor, birazdan hazır olur.');
-
-      if (json.report) {
-        setReport(json.report);
-        const empty =
-          (!json.report.strengths || json.report.strengths.length === 0) &&
-          (!json.report.issues || json.report.issues.length === 0) &&
-          (!json.report.drills || json.report.drills.length === 0);
-        setAllowForce(empty);
-      }
-      setOpen(true);
-    } catch (e:any) {
-      setMsg(e.message || 'Analiz başarısız. Videodan yeterli kare çıkarılamadı.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-8">
-        <button
-          className="px-3 py-1.5 rounded bg-black text-white text-sm"
-          onClick={() => run(false)}
-          disabled={loading}
-          title="Bu video için AI analizi çalıştır veya cache’ten getirir"
-        >
-          {loading ? 'Analiz…' : 'AI ile Analiz Et'}
-        </button>
-
-        {(canForce || allowForce) && (
-          <button
-            className="px-3 py-1.5 rounded border text-sm"
-            onClick={() => run(true)}
-            disabled={loading}
-            title="Yeni sürüm üret (cache’i atlar)"
-          >
-            Yeniden Analiz
-          </button>
-        )}
-
-        {report && (
-          <button
-            className="text-sm underline"
-            onClick={() => setOpen((v) => !v)}
-            title="Rapor panelini aç/kapat"
-          >
-            {open ? 'Raporu Gizle' : 'Raporu Göster'}
-          </button>
-        )}
-      </div>
-
-      {msg && <div className="text-xs text-amber-600">{msg}</div>}
-
-      {open && report && (
-        <div className="grid md:grid-cols-3 gap-3 border rounded p-3 bg-black/5">
-          <Section title="Güçlü Yanlar" items={report.strengths} />
-          <Section title="Geliştirme Alanları" items={report.issues} />
-          <Section title="Drill Önerileri" items={report.drills} />
-        </div>
-      )}
-    </div>
-  );
+// FFmpeg komutunu çalıştır
+function run(cmd: string, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const p = spawn(cmd, args);
+    let stderr = "";
+    p.stderr?.on("data", d => (stderr += d.toString()));
+    p.on("error", (err) => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
+    p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`))));
+  });
 }
 
-function Section({ title, items }: { title:string; items:string[] }) {
-  const has = Array.isArray(items) && items.length > 0;
-  return (
-    <div>
-      <div className="font-semibold mb-1 text-sm">{title}</div>
-      {has ? (
-        <ul className="list-disc pl-5 text-xs space-y-1">
-          {items.map((t, i) => <li key={i}>{t}</li>)}
-        </ul>
-      ) : (
-        <div className="text-xs opacity-70">Veri üretilemedi.</div>
-      )}
-    </div>
-  );
+// Platforma uygun ffmpeg binary yolu (@ffmpeg-installer/ffmpeg)
+async function ffmpegPath(): Promise<string> {
+  const mod = await import("@ffmpeg-installer/ffmpeg"); // dinamik import
+  return (mod as any).path as string;
+}
+
+/**
+ * Sahne algılı kare çıkarma:
+ * - 2 sn başını atlar (ss)
+ * - scene cut ile anlamlı değişimleri seçer
+ * - çok karanlık/bozuk kareleri eleyip en fazla maxFrames kadar kare döndürür
+ * - base64 JPEG döner (OpenAI vision input_image için)
+ */
+export async function extractJpegFramesBase64(
+  inputPath: string,
+  opts?: { maxFrames?: number; width?: number; scene?: number; ss?: number }
+) {
+  const maxFrames = opts?.maxFrames ?? 8;
+  const width = opts?.width ?? 640;
+  const scene = opts?.scene ?? 0.25; // sahne eşiği
+  const ss = opts?.ss ?? 2;          // başlangıç ofseti (s)
+
+  const outDir = path.join(os.tmpdir(), `frames_${Date.now()}`);
+  await fs.mkdir(outDir, { recursive: true });
+
+  const ff = await ffmpegPath();
+
+  // 1) Sahne değişimine göre kareleri çıkar
+  const pattern = path.join(outDir, "f_%04d.jpg");
+  const vf = [
+    `select='gt(scene,${scene})'`, // sahne değişimi
+    `scale=${width}:-1`,
+    "yadif=0:-1:0",                 // varsa interlace düzelt
+  ].join(",");
+
+  const args1 = [
+    "-ss", String(ss),
+    "-i", inputPath,
+    "-vf", vf,
+    "-vsync", "vfr",
+    "-qscale:v", "3",
+    pattern,
+    "-hide_banner",
+    "-loglevel", "error",
+  ];
+  await run(ff, args1);
+
+  // 2) Çok karanlık/bozuk kareleri ayıkla (basit boyut eşiği)
+  const filesAll = (await fs.readdir(outDir)).filter(f => f.endsWith(".jpg")).sort();
+  const kept: string[] = [];
+  for (const f of filesAll) {
+    const p = path.join(outDir, f);
+    const stat = await fs.stat(p);
+    if (stat.size < 10 * 1024) continue; // 10KB altı genelde kullanılmaz
+    kept.push(p);
+    if (kept.length >= maxFrames) break;
+  }
+
+  // 3) Hiç sahne yakalanamadıysa → düzenli sampling fallback
+  if (kept.length === 0) {
+    const fallbackPattern = path.join(outDir, "r_%04d.jpg");
+    const args2 = [
+      "-ss", String(ss),
+      "-i", inputPath,
+      "-vf", `fps=2,scale=${width}:-1`,
+      "-qscale:v", "3",
+      fallbackPattern,
+      "-hide_banner",
+      "-loglevel", "error",
+    ];
+    await run(ff, args2);
+    const fb = (await fs.readdir(outDir)).filter(f => f.startsWith("r_")).sort().slice(0, maxFrames);
+    for (const f of fb) kept.push(path.join(outDir, f));
+  }
+
+  // 4) Base64 olarak döndür
+  const images: { type: "input_image"; image_url: string; detail: "low" }[] = [];
+  for (const p of kept) {
+    const b = await fs.readFile(p);
+    images.push({
+      type: "input_image",
+      image_url: `data:image/jpeg;base64,${b.toString("base64")}`,
+      detail: "low",
+    });
+  }
+  return images;
 }
