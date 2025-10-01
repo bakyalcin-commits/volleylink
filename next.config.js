@@ -3,11 +3,9 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: { typedRoutes: false },
   webpack: (config) => {
-    // ffmpeg-static'ı runtime'da require edeceğiz; bundla gömmeyelim
     config.externals = config.externals || [];
-    config.externals.push({
-      "ffmpeg-static": "commonjs ffmpeg-static",
-    });
+    // ffmpeg-static'ı server runtime'da require edeceğiz; bundle'a gömmeyelim
+    config.externals.push({ "ffmpeg-static": "commonjs ffmpeg-static" });
     return config;
   },
 };
