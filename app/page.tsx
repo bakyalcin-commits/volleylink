@@ -3,14 +3,9 @@
 import { useState } from 'react';
 import UploadForm from '@/components/UploadForm';
 import DiscoverGrid from '@/components/DiscoverGrid';
-import AnalyzePanel from '@/components/AnalyzePanel';
 
 export default function Page() {
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // Demo: var olan videolar için manuel analiz alanı
-  const [videoId, setVideoId] = useState<string>('');
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
 
   return (
     <>
@@ -60,39 +55,6 @@ export default function Page() {
           </button>
         </div>
       </section>
-
-      {/* --- AI Analizi (beta) — mevcut videolara manuel test alanı --- */}
-      <section className="card" style={{ marginTop: 16 }}>
-        <h3 style={{ margin: '6px 0 12px' }}>AI Analizi (beta)</h3>
-        <p className="p" style={{ marginBottom: 10 }}>
-          Var olan bir <code>videoId</code> gir. Eğer bu video daha önce analiz edildiyse
-          rapor cache’ten gösterilir; değilse analiz başlatılır.
-        </p>
-        <div className="row" style={{ gap: 8 }}>
-          <input
-            className="input"
-            placeholder="videoId"
-            value={videoId}
-            onChange={(e) => setVideoId(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button
-            className="button"
-            onClick={() => setSelectedVideoId(videoId.trim() || null)}
-            disabled={!videoId.trim()}
-          >
-            Raporu Aç
-          </button>
-        </div>
-
-        {selectedVideoId && (
-          <div style={{ marginTop: 14 }}>
-            {/* Not: AnalyzePanel client component — cache + analyze logic içeriyor */}
-            <AnalyzePanel videoId={selectedVideoId} canForce />
-          </div>
-        )}
-      </section>
-      {/* --- /AI Analizi (beta) --- */}
 
       <section id="upload" className="card" style={{ marginTop: 16 }}>
         <h3 style={{ margin: '6px 0 12px' }}>İlk videonu yükle</h3>
