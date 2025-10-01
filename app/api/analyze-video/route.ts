@@ -10,13 +10,42 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { extractJpegFramesBase64 } from "@/lib/frames";
 
-const ANALYZER_VERSION = 5; // cache kır
+const ANALYZER_VERSION = 5; // cache kır / versiyonla
 
 type VideoRow = { id: string; storage_path: string };
 
 type VisionPart =
   | { type: "input_text"; text: string }
   | { type: "input_image"; image_url: string; detail: "low" | "high" | "auto" };
+
+/* ------------------ JSON-DAYANIKLI OKUMA YARDIMCILARI ------------------ */
+function pickText(resp: any): string {
+  try {
+    if (typeof resp?.output_text === "string" && resp.output_text.trim()) {
+      return resp.output_text;
+    }
+    const blocks = resp?.output?.[0]?.content ?? [];
+    for (const b of blocks) {
+      if ((b.type === "output_text" || b.type === "text") && typeof b.text === "string") {
+        return b.text;
+      }
+      if (b?.text) return String(b.text);
+    }
+  } catch {}
+  return "";
+}
+
+function parseJsonLoose(s: string): any | null {
+  if (!s) return null;
+  // ```json ... ``` gibi fence'leri temizle
+  s = s.replace(/```json|```/g, "").trim();
+  // metin içinde ilk JSON bloğunu yakala
+  const m = s.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { return JSON.parse(m[0]); } catch {}
+  return null;
+}
+/* ----------------------------------------------------------------------- */
 
 export async function POST(req: NextRequest) {
   const { videoId, force } = await req.json();
@@ -30,7 +59,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // cache (boş değil ve güncelse)
+  // cache: boş olmayan ve güncel sürümse kullan
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -101,12 +130,12 @@ export async function POST(req: NextRequest) {
   const analysisId = created.id;
 
   try {
-    // ---------- 1. PAS ----------
+    /* ===================== 1. PAS ===================== */
     let framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "2", maxFrames: 24, width: 896 });
     if (!framesRaw.length) throw new Error("No frames extracted");
 
-    // ilk 10 kare high detail, kalanı low
-    let frames: VisionPart[] = framesRaw.map((f, i) =>
+    // ilk 10 kare high, kalanı low
+    const frames1: VisionPart[] = framesRaw.map((f, i) =>
       i < 10
         ? { type: "input_image", image_url: f.image_url, detail: "high" }
         : { type: "input_image", image_url: f.image_url, detail: "low" }
@@ -147,7 +176,7 @@ JSON ŞEMASI:
       }
     };
 
-    const content1: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames];
+    const content1: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames1];
 
     let resp = await openai.responses.create({
       model: DEFAULT_VISION_MODEL,
@@ -156,22 +185,21 @@ JSON ŞEMASI:
       text: { format: jsonFormat }
     } as any);
 
-    let text = resp.output_text ?? "{}";
-    let report: VbReport = { strengths: [], issues: [], drills: [] };
-    try { report = JSON.parse(text); } catch {}
+    let report: VbReport =
+      parseJsonLoose(pickText(resp)) ?? { strengths: [], issues: [], drills: [] };
 
-    // ---------- 2. PAS (fallback) ----------
+    /* ===================== 2. PAS (fallback) ===================== */
     const empty1 = (!report.strengths?.length) && (!report.issues?.length) && (!report.drills?.length);
     if (empty1) {
       framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "3", maxFrames: 28, width: 1024 });
       if (!framesRaw.length) throw new Error("No frames extracted (fallback)");
 
-      frames = framesRaw.map((f, i) =>
+      const frames2: VisionPart[] = framesRaw.map((f, i) =>
         i < 14
           ? { type: "input_image", image_url: f.image_url, detail: "high" }
           : { type: "input_image", image_url: f.image_url, detail: "low" }
       );
-      const content2: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames];
+      const content2: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames2];
 
       resp = await openai.responses.create({
         model: DEFAULT_VISION_MODEL,
@@ -180,11 +208,11 @@ JSON ŞEMASI:
         text: { format: jsonFormat }
       } as any);
 
-      text = resp.output_text ?? "{}";
-      try { report = JSON.parse(text); } catch {}
+      report = parseJsonLoose(pickText(resp)) ?? { strengths: [], issues: [], drills: [] };
     }
 
-    const emptyFinal = (!report.strengths?.length) && (!report.issues?.length) && (!report.drills?.length);
+    const emptyFinal =
+      (!report.strengths?.length) && (!report.issues?.length) && (!report.drills?.length);
     if (emptyFinal) throw new Error("Model boş içerik döndürdü (frames yetersiz olabilir).");
 
     await supabase
