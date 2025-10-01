@@ -3,34 +3,26 @@ import { useState } from 'react';
 
 type VbReport = { strengths: string[]; issues: string[]; drills: string[] };
 
-export default function AnalyzeInline({ videoId, canForce = false }: { videoId: string; canForce?: boolean }) {
+export default function AnalyzeInline({ videoId }: { videoId: string }) {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<VbReport | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [allowForce, setAllowForce] = useState(false); // rapor boşsa herkese force
 
-  const run = async (force = false) => {
-    setLoading(true); setMsg(null);
+  const run = async () => {
+    setLoading(true);
+    setMsg(null);
     try {
       const res = await fetch('/api/analyze-video', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ videoId, force })
+        body: JSON.stringify({ videoId })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Analiz başarısız');
 
       if (json.queued) setMsg('Analiz zaten çalışıyor, birazdan hazır olur.');
-
-      if (json.report) {
-        setReport(json.report);
-        const empty =
-          (!json.report.strengths || json.report.strengths.length === 0) &&
-          (!json.report.issues || json.report.issues.length === 0) &&
-          (!json.report.drills || json.report.drills.length === 0);
-        setAllowForce(empty);
-      }
+      if (json.report) setReport(json.report);
       setOpen(true);
     } catch (e:any) {
       setMsg(e.message || 'Analiz başarısız. Videodan yeterli kare çıkarılamadı.');
@@ -42,10 +34,9 @@ export default function AnalyzeInline({ videoId, canForce = false }: { videoId: 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-8">
-        {/* Sarı buton */}
         <button
           className="button-ai"
-          onClick={() => run(false)}
+          onClick={run}
           disabled={loading}
           title="Bu video için AI analizi çalıştır"
         >
