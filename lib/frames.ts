@@ -1,38 +1,34 @@
 // lib/frames.ts
-import ffmpegPath from "ffmpeg-static";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
 function assertNodeRuntime() {
-  // Edge'te process.versions.node yok denecek kadar kısıtlıdır
   if (typeof process === "undefined" || !process.versions?.node) {
-    throw new Error("FFmpeg sadece Node.js runtime'ta çalışır (Edge değil).");
+    throw new Error("FFmpeg yalnızca Node.js runtime'ta çalışır (Edge değil).");
   }
 }
 
 async function resolveFfmpegPath(): Promise<string> {
   assertNodeRuntime();
-  // ffmpeg-static bazı ortamlar için null dönebilir
-  const p = ffmpegPath as unknown as string | null;
-  if (!p) return "ffmpeg"; // eğer sistemde ffmpeg varsa (local dev), fallback
-  // Vercel paketledi mi kontrol edelim
-  try {
-    await fs.access(p);
-    return p;
-  } catch {
-    // Bazen paketlenmiş ama farklı mount noktasında olabilir; yine de deneyelim
+  // Dinamik import: bundler sabit bir path’e çevirmesin
+  const mod = await import("ffmpeg-static");
+  const p = (mod as any).default as string | null | undefined;
+  if (p) {
+    try { await fs.access(p); } catch {/* erişilemese de deneyebiliriz */}
     return p;
   }
+  // Local dev’de sistem ffmpeg’i
+  return "ffmpeg";
 }
 
 export async function extractJpegFramesBase64(
   inputPath: string,
   opts?: { fps?: string; maxFrames?: number; width?: number }
 ) {
-  const fps = opts?.fps ?? "1/3";           // her 3sn'de 1 kare
-  const maxFrames = opts?.maxFrames ?? 8;   // maliyet kontrol
-  const width = opts?.width ?? 768;         // hız + token tasarrufu
+  const fps = opts?.fps ?? "1/3";
+  const maxFrames = opts?.maxFrames ?? 8;
+  const width = opts?.width ?? 768;
 
   const outDir = path.join("/tmp", `frames_${Date.now()}`);
   await fs.mkdir(outDir, { recursive: true });
@@ -72,12 +68,7 @@ function run(cmd: string, args: string[]) {
     const p = spawn(cmd, args);
     let stderr = "";
     p.stderr?.on("data", d => (stderr += d.toString()));
-    p.on("error", (err) => {
-      reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`));
-    });
-    p.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `FFmpeg exit code ${code}`));
-    });
+    p.on("error", (err) => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
+    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`)));
   });
 }
