@@ -7,22 +7,23 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { extractJpegFramesBase64 } from "@/lib/frames";
 
-// İstersen Node runtime'a sabitle:
+// Gerekirse Node runtime'a sabitle
 // export const runtime = "nodejs";
 
 type VideoRow = {
   id: string;
-  storage_path: string;  // <- kendi şemanıza göre adını uyarlayın
-  bucket?: string | null;
+  storage_path: string;
 };
 
 export async function POST(req: NextRequest) {
   const { videoId, force } = await req.json();
-  if (!videoId) return NextResponse.json({ error: "videoId required" }, { status: 400 });
+  if (!videoId) {
+    return NextResponse.json({ error: "videoId required" }, { status: 400 });
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const defaultBucket = process.env.SUPABASE_VIDEOS_BUCKET || "videos"; // ENV ile ayarlanabilir
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const bucket = process.env.SUPABASE_VIDEOS_BUCKET || "videos";
 
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase env missing" }, { status: 500 });
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // 1) DONE varsa ve force değilse -> cache’ten dön
+  // 1) DONE varsa ve force değilse cache’ten dön
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -45,7 +46,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         from_cache: true,
         report: cached.report as VbReport,
-        meta: { version: cached.version, model: cached.model, created_at: cached.created_at }
+        meta: {
+          version: cached.version,
+          model: cached.model,
+          created_at: cached.created_at,
+        },
       });
     }
   }
@@ -59,34 +64,43 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (active) {
-    return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
+    return NextResponse.json(
+      { queued: true, message: "Analysis already in progress." },
+      { status: 202 }
+    );
   }
 
   // 3) video tablosundan dosya yolunu çek
   const { data: videoRow, error: vErr } = await supabase
-    .from("videos")             // <- tablo adını gerekirse değiştir
-    .select("id, storage_path, bucket")
+    .from("videos")
+    .select("id, storage_path")
     .eq("id", videoId)
     .maybeSingle<VideoRow>();
 
   if (vErr || !videoRow?.storage_path) {
-    return NextResponse.json({ error: vErr?.message || "video not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: vErr?.message || "video not found" },
+      { status: 404 }
+    );
   }
 
-  const bucket = videoRow.bucket || defaultBucket;
-
   // 4) storage’tan indir -> /tmp
-  const { data: file, error: dErr } = await supabase
-    .storage
+  const { data: file, error: dErr } = await supabase.storage
     .from(bucket)
     .download(videoRow.storage_path);
 
   if (dErr || !file) {
-    return NextResponse.json({ error: dErr?.message || "download failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: dErr?.message || "download failed" },
+      { status: 500 }
+    );
   }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
+  const tmpPath = path.join(
+    "/tmp",
+    `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`
+  );
   await fs.writeFile(tmpPath, buf);
 
   // 5) pending kaydı oluştur
@@ -96,29 +110,37 @@ export async function POST(req: NextRequest) {
       video_id: videoId,
       status: "pending",
       model: DEFAULT_VISION_MODEL,
-      params: { fps: "1/3", frames: 8, width: 768 }
+      params: { fps: "1/3", frames: 8, width: 768 },
     })
     .select()
     .single();
 
   if (insErr || !created) {
-    return NextResponse.json({ error: insErr?.message || "insert failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: insErr?.message || "insert failed" },
+      { status: 500 }
+    );
   }
 
   const analysisId = created.id;
 
   try {
     // 6) frame çıkar
-    const frames = await extractJpegFramesBase64(tmpPath, { fps: "1/3", maxFrames: 8, width: 768 });
+    const frames = await extractJpegFramesBase64(tmpPath, {
+      fps: "1/3",
+      maxFrames: 8,
+      width: 768,
+    });
 
-    if (!frames.length) {
-      throw new Error("No frames extracted");
-    }
+    if (!frames.length) throw new Error("No frames extracted");
 
     // status -> processing
-    await supabase.from("video_analyses").update({ status: "processing" }).eq("id", analysisId);
+    await supabase
+      .from("video_analyses")
+      .update({ status: "processing" })
+      .eq("id", analysisId);
 
-    // 7) GPT çağrısı (yalnızca JSON dön)
+    // 7) GPT çağrısı
     const prompt = `
 Sen profesyonel bir voleybol analistisın.
 Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş.
@@ -131,10 +153,7 @@ SADECE geçerli JSON döndür:
       input: [
         {
           role: "user",
-          content: [
-            { type: "input_text", text: prompt },
-            ...frames,                // <— gerçek kareler burada
-          ],
+          content: [{ type: "input_text", text: prompt }, ...frames],
         },
       ],
       temperature: 0,
@@ -142,20 +161,37 @@ SADECE geçerli JSON döndür:
 
     const text = resp.output_text ?? "{}";
     let report: VbReport = { strengths: [], issues: [], drills: [] };
-    try { report = JSON.parse(text); } catch {}
+    try {
+      report = JSON.parse(text);
+    } catch {}
 
     // 8) kaydet -> done
     await supabase
       .from("video_analyses")
-      .update({ status: "done", report, updated_at: new Date().toISOString() })
+      .update({
+        status: "done",
+        report,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", analysisId);
 
-    return NextResponse.json({ from_cache: false, report, meta: { model: DEFAULT_VISION_MODEL } });
+    return NextResponse.json({
+      from_cache: false,
+      report,
+      meta: { model: DEFAULT_VISION_MODEL },
+    });
   } catch (e: any) {
-    await supabase.from("video_analyses").update({ status: "failed" }).eq("id", analysisId);
-    return NextResponse.json({ error: e?.message || "analysis failed" }, { status: 500 });
+    await supabase
+      .from("video_analyses")
+      .update({ status: "failed" })
+      .eq("id", analysisId);
+    return NextResponse.json(
+      { error: e?.message || "analysis failed" },
+      { status: 500 }
+    );
   } finally {
-    // temp dosyayı sil
-    try { await fs.unlink(tmpPath); } catch {}
+    try {
+      await fs.unlink(tmpPath);
+    } catch {}
   }
 }
