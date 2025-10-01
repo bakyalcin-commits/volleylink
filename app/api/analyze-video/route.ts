@@ -1,5 +1,4 @@
 // app/api/analyze-video/route.ts
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -27,16 +26,12 @@ export async function POST(req: NextRequest) {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // Cache: boş veya eski sürümse YOK SAY
+  // Cache: boş veya eski sürümse yok say
   if (!force) {
     const { data: cached } = await supabase
-      .from("video_analyses")
-      .select("*")
-      .eq("video_id", videoId)
-      .eq("status", "done")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .from("video_analyses").select("*")
+      .eq("video_id", videoId).eq("status", "done")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
 
     const isEmpty = !cached?.report?.strengths?.length && !cached?.report?.issues?.length && !cached?.report?.drills?.length;
     const isStale = (cached?.version ?? 0) !== ANALYZER_VERSION;
@@ -47,10 +42,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Aktif iş?
+  // Zaten kuyrukta mı?
   const { data: active } = await supabase
-    .from("video_analyses").select("id").eq("video_id", videoId)
-    .in("status", ["pending", "processing"]).maybeSingle();
+    .from("video_analyses").select("id")
+    .eq("video_id", videoId).in("status", ["pending","processing"]).maybeSingle();
   if (active) return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
 
   // Video yolu
@@ -66,17 +61,17 @@ export async function POST(req: NextRequest) {
   const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
   await fs.writeFile(tmpPath, buf);
 
-  // pending
+  // Pending
   const { data: created, error: insErr } = await supabase
     .from("video_analyses")
     .insert({ video_id: videoId, status: "pending", model: DEFAULT_VISION_MODEL, version: ANALYZER_VERSION,
-      params: { mode: "scene", scene: 0.25, ss: 2, frames: 8, width: 640 } })
+              params: { mode: "scene", scene: 0.25, ss: 2, frames: 8, width: 640 } })
     .select().single();
   if (insErr || !created) return NextResponse.json({ error: insErr?.message || "insert failed" }, { status: 500 });
   const analysisId = created.id;
 
   try {
-    // Kare çıkar: sahne algılı + fallback
+    // Kare çıkar (scene + fallback)
     const framesRaw = await extractJpegFramesBase64(tmpPath, { scene: 0.25, ss: 2, maxFrames: 8, width: 640 });
     if (!framesRaw.length) throw new Error("No frames extracted");
 
@@ -85,7 +80,6 @@ export async function POST(req: NextRequest) {
 
     await supabase.from("video_analyses").update({ status: "processing" }).eq("id", analysisId);
 
-    // Prompt (min 3 madde)
     const prompt = `
 Sen profesyonel bir voleybol analistisın. Görüntülerde smaç/antrenman sekanslarını değerlendir.
 Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş, core/denge, kol-bacak senkronu.
