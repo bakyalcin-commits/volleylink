@@ -12,6 +12,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { extractJpegFramesBase64 } from "@/lib/frames";
 
+const ANALYZER_VERSION = 2; // prompt/kare stratejisi değiştikçe arttır
+
 type VideoRow = {
   id: string;
   storage_path: string;
@@ -19,18 +21,21 @@ type VideoRow = {
 
 export async function POST(req: NextRequest) {
   const { videoId, force } = await req.json();
-  if (!videoId) return NextResponse.json({ error: "videoId required" }, { status: 400 });
+  if (!videoId) {
+    return NextResponse.json({ error: "videoId required" }, { status: 400 });
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const bucket      = process.env.SUPABASE_VIDEOS_BUCKET || "videos";
+
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase env missing" }, { status: 500 });
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // 1) DONE varsa ve force değilse cache’ten dön
+  // 1) Cache kontrolü: boş/eskimiş raporu YOK SAY
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -41,7 +46,14 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    if (cached?.report) {
+    const isEmpty =
+      !cached?.report?.strengths?.length &&
+      !cached?.report?.issues?.length &&
+      !cached?.report?.drills?.length;
+
+    const isStale = (cached?.version ?? 0) !== ANALYZER_VERSION;
+
+    if (cached?.report && !isEmpty && !isStale) {
       return NextResponse.json({
         from_cache: true,
         report: cached.report as VbReport,
@@ -50,7 +62,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 2) aktif iş var mı?
+  // 2) Aktif iş var mı?
   const { data: active } = await supabase
     .from("video_analyses")
     .select("id")
@@ -62,7 +74,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
   }
 
-  // 3) video yolunu al (bucket kolonu yok)
+  // 3) Video yolunu al (bucket kolonu yok)
   const { data: videoRow, error: vErr } = await supabase
     .from("videos")
     .select("id, storage_path")
@@ -73,7 +85,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: vErr?.message || "video not found" }, { status: 404 });
   }
 
-  // 4) storage’tan indir → /tmp
+  // 4) Storage'tan indir → /tmp
   const { data: file, error: dErr } = await supabase
     .storage
     .from(bucket)
@@ -94,6 +106,7 @@ export async function POST(req: NextRequest) {
       video_id: videoId,
       status: "pending",
       model: DEFAULT_VISION_MODEL,
+      version: ANALYZER_VERSION,
       params: { fps: "2", frames: 8, width: 640 }
     })
     .select()
@@ -106,7 +119,7 @@ export async function POST(req: NextRequest) {
   const analysisId = created.id;
 
   try {
-    // 6) kare çıkar (fps=2, max 8), ilk 2 kare high-detail
+    // 6) Kare çıkar (fps=2, max 8) → ilk 2 kare high-detail
     const framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "2", maxFrames: 8, width: 640 });
     if (!framesRaw.length) throw new Error("No frames extracted");
 
@@ -114,7 +127,7 @@ export async function POST(req: NextRequest) {
 
     await supabase.from("video_analyses").update({ status: "processing" }).eq("id", analysisId);
 
-    // 7) GPT — minimum 3 madde şartı
+    // 7) GPT — min 3 madde şartı
     const prompt = `
 Sen profesyonel bir voleybol analistisın. Görüntülerde smaç/antrenman sekanslarını değerlendir.
 Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş, core/denge, kol-bacak senkronu.
@@ -153,7 +166,7 @@ JSON ŞEMASI:
 
     await supabase
       .from("video_analyses")
-      .update({ status: "done", report, updated_at: new Date().toISOString() })
+      .update({ status: "done", report, version: ANALYZER_VERSION, updated_at: new Date().toISOString() })
       .eq("id", analysisId);
 
     return NextResponse.json({ from_cache: false, report, meta: { model: DEFAULT_VISION_MODEL } });
