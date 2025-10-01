@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // cache
+  // cache kontrolü
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses").select("*")
@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
 
     if (cached?.report && !isEmpty && !isStale) {
       return NextResponse.json({
-        from_cache: true,
         report: cached.report as VbReport,
         meta: { version: cached.version, model: cached.model, created_at: cached.created_at }
       });
@@ -67,7 +66,7 @@ export async function POST(req: NextRequest) {
   const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
   await fs.writeFile(tmpPath, buf);
 
-  // pending
+  // pending kaydı
   const { data: created, error: insErr } = await supabase
     .from("video_analyses").insert({
       video_id: videoId,
@@ -155,7 +154,7 @@ JSON: {"strengths":["..."],"issues":["..."],"drills":["..."]}
       .update({ status: "done", report, version: ANALYZER_VERSION, updated_at: new Date().toISOString() })
       .eq("id", analysisId);
 
-    return NextResponse.json({ from_cache: false, report, meta: { model: DEFAULT_VISION_MODEL } });
+    return NextResponse.json({ report, meta: { model: DEFAULT_VISION_MODEL } });
   } catch (e: any) {
     await supabase.from("video_analyses").update({ status: "failed" }).eq("id", analysisId);
     return NextResponse.json({ error: e?.message || "analysis failed" }, { status: 500 });
