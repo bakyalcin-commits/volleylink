@@ -10,7 +10,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { extractJpegFramesBase64 } from "@/lib/frames";
 
-const ANALYZER_VERSION = 5; // ↑ versiyon: cache kır
+const ANALYZER_VERSION = 5; // cache kır
 
 type VideoRow = { id: string; storage_path: string };
 
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // cache (boş veya eski değilse)
+  // cache (boş değil ve güncelse)
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -41,9 +41,10 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    const isEmpty = !cached?.report?.strengths?.length &&
-                    !cached?.report?.issues?.length &&
-                    !cached?.report?.drills?.length;
+    const isEmpty =
+      !cached?.report?.strengths?.length &&
+      !cached?.report?.issues?.length &&
+      !cached?.report?.drills?.length;
     const isStale = (cached?.version ?? 0) !== ANALYZER_VERSION;
 
     if (cached?.report && !isEmpty && !isStale) {
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // aktif iş kontrol
+  // aktif iş?
   const { data: active } = await supabase
     .from("video_analyses")
     .select("id")
@@ -100,11 +101,11 @@ export async function POST(req: NextRequest) {
   const analysisId = created.id;
 
   try {
-    // ---------- 1. PAS (daha çok ve daha geniş) ----------
+    // ---------- 1. PAS ----------
     let framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "2", maxFrames: 24, width: 896 });
     if (!framesRaw.length) throw new Error("No frames extracted");
 
-    // ilk 10 kare high, kalanı low → kalite + maliyet dengesi
+    // ilk 10 kare high detail, kalanı low
     let frames: VisionPart[] = framesRaw.map((f, i) =>
       i < 10
         ? { type: "input_image", image_url: f.image_url, detail: "high" }
@@ -119,7 +120,7 @@ Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş, core/den
 
 KURALLAR:
 - SADECE geçerli JSON döndür.
-- Her listede en az 3 madde olsun; boş liste yok.
+- Her listede en az 3 madde; boş liste yok.
 - Cümleler kısa ve spesifik (≈15 kelime, teknik terim serbest).
 
 JSON ŞEMASI:
@@ -159,7 +160,7 @@ JSON ŞEMASI:
     let report: VbReport = { strengths: [], issues: [], drills: [] };
     try { report = JSON.parse(text); } catch {}
 
-    // ---------- 2. PAS (fallback; biraz daha sık fps ve daha geniş) ----------
+    // ---------- 2. PAS (fallback) ----------
     const empty1 = (!report.strengths?.length) && (!report.issues?.length) && (!report.drills?.length);
     if (empty1) {
       framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "3", maxFrames: 28, width: 1024 });
