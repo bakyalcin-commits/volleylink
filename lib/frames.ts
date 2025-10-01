@@ -1,4 +1,7 @@
 // lib/frames.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
