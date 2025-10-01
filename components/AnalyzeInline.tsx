@@ -3,37 +3,37 @@ import { useState } from 'react';
 
 type VbReport = { strengths: string[]; issues: string[]; drills: string[] };
 
-export default function AnalyzeInline({ videoId, canForce = false }: { videoId: string; canForce?: boolean }) {
+export default function AnalyzeInline({
+  videoId,
+  canForce = false, // artık kullanılmıyor ama API sabit kalsın
+}: {
+  videoId: string;
+  canForce?: boolean;
+}) {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<VbReport | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [allowForce, setAllowForce] = useState(false); // rapor boşsa herkese force
 
   const run = async (force = false) => {
-    setLoading(true); setMsg(null);
+    setLoading(true);
+    setMsg(null);
     try {
       const res = await fetch('/api/analyze-video', {
         method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ videoId, force })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId, force }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Analiz başarısız');
 
-      if (json.from_cache) setMsg('Önceden yapılan analiz gösteriliyor.');
-      if (json.queued) setMsg('Analiz zaten çalışıyor, birazdan hazır olur.');
+      // Önceden cache mesajını tamamen kaldırdık.
+      // Kuyruğa alındı mesajını da istemiyorsan aşağıdaki satırı da sil.
+      if (json.queued) setMsg('Analiz çalışıyor, birazdan hazır olur.');
 
-      if (json.report) {
-        setReport(json.report);
-        const empty =
-          (!json.report.strengths || json.report.strengths.length === 0) &&
-          (!json.report.issues || json.report.issues.length === 0) &&
-          (!json.report.drills || json.report.drills.length === 0);
-        setAllowForce(empty);
-      }
+      if (json.report) setReport(json.report);
       setOpen(true);
-    } catch (e:any) {
+    } catch (e: any) {
       setMsg(e.message || 'Analiz başarısız. Videodan yeterli kare çıkarılamadı.');
     } finally {
       setLoading(false);
@@ -47,21 +47,12 @@ export default function AnalyzeInline({ videoId, canForce = false }: { videoId: 
           className="px-3 py-1.5 rounded bg-black text-white text-sm"
           onClick={() => run(false)}
           disabled={loading}
-          title="Bu video için AI analizi çalıştır veya cache’ten getirir"
+          title="Bu video için AI analizi çalıştırır (gerekirse cache’ten getirir)"
         >
           {loading ? 'Analiz…' : 'AI ile Analiz Et'}
         </button>
 
-        {(canForce || allowForce) && (
-          <button
-            className="px-3 py-1.5 rounded border text-sm"
-            onClick={() => run(true)}
-            disabled={loading}
-            title="Yeni sürüm üret (cache’i atlar)"
-          >
-            Yeniden Analiz
-          </button>
-        )}
+        {/* Yeniden Analiz butonu tamamen kaldırıldı */}
 
         {report && (
           <button
@@ -87,14 +78,16 @@ export default function AnalyzeInline({ videoId, canForce = false }: { videoId: 
   );
 }
 
-function Section({ title, items }: { title:string; items:string[] }) {
+function Section({ title, items }: { title: string; items: string[] }) {
   const has = Array.isArray(items) && items.length > 0;
   return (
     <div>
       <div className="font-semibold mb-1 text-sm">{title}</div>
       {has ? (
         <ul className="list-disc pl-5 text-xs space-y-1">
-          {items.map((t, i) => <li key={i}>{t}</li>)}
+          {items.map((t, i) => (
+            <li key={i}>{t}</li>
+          ))}
         </ul>
       ) : (
         <div className="text-xs opacity-70">Veri üretilemedi.</div>
