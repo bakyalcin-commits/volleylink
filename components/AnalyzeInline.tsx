@@ -42,29 +42,21 @@ export default function AnalyzeInline({ videoId, canForce = false }: { videoId: 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-8">
+        {/* Sarı buton */}
         <button
-          className="button"     // diğer butonlarla aynı stil
+          className="button-ai"
           onClick={() => run(false)}
           disabled={loading}
-          aria-busy={loading ? 'true' : 'false'}
+          title="Bu video için AI analizi çalıştır"
         >
           {loading ? 'Analiz…' : 'Yapay Zeka Analizi'}
         </button>
-
-        {(canForce || allowForce) && (
-          <button
-            className="button secondary"
-            onClick={() => run(true)}
-            disabled={loading}
-          >
-            Yeniden Analiz
-          </button>
-        )}
 
         {report && (
           <button
             className="text-sm underline"
             onClick={() => setOpen((v) => !v)}
+            title="Rapor panelini aç/kapat"
           >
             {open ? 'Raporu Gizle' : 'Raporu Göster'}
           </button>
