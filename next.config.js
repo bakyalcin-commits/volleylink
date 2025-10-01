@@ -3,9 +3,8 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: {
     typedRoutes: false,
-    // ffmpeg paketi bundle’a gömülmesin; Node runtime’da çöz
+    // ffmpeg binary’i server bundle dışında bırak
     serverComponentsExternalPackages: ['@ffmpeg-installer/ffmpeg'],
   },
 };
-
 module.exports = nextConfig;
