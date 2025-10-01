@@ -1,8 +1,8 @@
 // app/api/analyze-video/route.ts
 
-export const runtime = "nodejs";          // Edge değil, Node runtime
+export const runtime = "nodejs";          // Edge değil
 export const dynamic = "force-dynamic";   // cache yok / serverless
-export const maxDuration = 60;            // Vercel function time limit (opsiyonel)
+export const maxDuration = 60;            // (opsiyonel) Vercel limit
 
 import { NextRequest, NextResponse } from "next/server";
 import { openai, DEFAULT_VISION_MODEL, VbReport } from "@/lib/openai";
@@ -15,7 +15,6 @@ import { extractJpegFramesBase64 } from "@/lib/frames";
 type VideoRow = {
   id: string;
   storage_path: string;
-  bucket?: string | null;
 };
 
 export async function POST(req: NextRequest) {
@@ -24,15 +23,14 @@ export async function POST(req: NextRequest) {
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const defaultBucket = process.env.SUPABASE_VIDEOS_BUCKET || "videos";
-
+  const bucket      = process.env.SUPABASE_VIDEOS_BUCKET || "videos";
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase env missing" }, { status: 500 });
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // 1) DONE varsa ve force değilse -> cache’ten dön
+  // 1) DONE varsa ve force değilse cache’ten dön
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -64,10 +62,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
   }
 
-  // 3) video tablosundan dosya yolunu çek
+  // 3) video yolunu al (bucket kolonu yok)
   const { data: videoRow, error: vErr } = await supabase
     .from("videos")
-    .select("id, storage_path, bucket")
+    .select("id, storage_path")
     .eq("id", videoId)
     .maybeSingle<VideoRow>();
 
@@ -75,9 +73,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: vErr?.message || "video not found" }, { status: 404 });
   }
 
-  const bucket = videoRow.bucket || defaultBucket;
-
-  // 4) storage’tan indir -> /tmp
+  // 4) storage’tan indir → /tmp
   const { data: file, error: dErr } = await supabase
     .storage
     .from(bucket)
@@ -91,7 +87,7 @@ export async function POST(req: NextRequest) {
   const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
   await fs.writeFile(tmpPath, buf);
 
-  // 5) pending kaydı oluştur
+  // 5) pending kaydı
   const { data: created, error: insErr } = await supabase
     .from("video_analyses")
     .insert({
@@ -110,21 +106,15 @@ export async function POST(req: NextRequest) {
   const analysisId = created.id;
 
   try {
-    // 6) frame çıkar (fps=2, en fazla 8 kare)
+    // 6) kare çıkar (fps=2, max 8), ilk 2 kare high-detail
     const framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "2", maxFrames: 8, width: 640 });
+    if (!framesRaw.length) throw new Error("No frames extracted");
 
-    if (!framesRaw.length) {
-      throw new Error("No frames extracted");
-    }
-
-    // ilk 2 kare high detail
-    const frames = framesRaw.map((f, i) =>
-      i < 2 ? { ...f, detail: "high" as const } : f
-    );
+    const frames = framesRaw.map((f, i) => (i < 2 ? { ...f, detail: "high" as const } : f));
 
     await supabase.from("video_analyses").update({ status: "processing" }).eq("id", analysisId);
 
-    // 7) GPT çağrısı
+    // 7) GPT — minimum 3 madde şartı
     const prompt = `
 Sen profesyonel bir voleybol analistisın. Görüntülerde smaç/antrenman sekanslarını değerlendir.
 Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş, core/denge, kol-bacak senkronu.
@@ -144,15 +134,7 @@ JSON ŞEMASI:
 
     const resp = await openai.responses.create({
       model: DEFAULT_VISION_MODEL,
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: prompt },
-            ...frames,
-          ],
-        },
-      ],
+      input: [{ role: "user", content: [{ type: "input_text", text: prompt }, ...frames] }],
       temperature: 0,
     });
 
