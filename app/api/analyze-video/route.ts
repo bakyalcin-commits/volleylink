@@ -11,7 +11,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { extractJpegFramesBase64 } from "@/lib/frames";
 
-// cache kırma
+// Cache kırma versiyonu
 const ANALYZER_VERSION = 4;
 
 type VideoRow = { id: string; storage_path: string };
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // cache: boş/eskimiş ise ignore
+  // Cache: boş/eskimiş değilse göster
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // aktif iş?
+  // Aktif iş?
   const { data: active } = await supabase
     .from("video_analyses")
     .select("id")
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (active) return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
 
-  // video satırı
+  // Video kaydı
   const { data: videoRow, error: vErr } = await supabase
     .from("videos")
     .select("id, storage_path")
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: vErr?.message || "video not found" }, { status: 404 });
   }
 
-  // storage → /tmp
+  // Dosyayı indir → /tmp
   const { data: file, error: dErr } = await supabase.storage.from(bucket).download(videoRow.storage_path);
   if (dErr || !file) return NextResponse.json({ error: dErr?.message || "download failed" }, { status: 500 });
 
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
   const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
   await fs.writeFile(tmpPath, buf);
 
-  // pending kayıt
+  // Pending kayıt
   const { data: created, error: insErr } = await supabase
     .from("video_analyses")
     .insert({
@@ -146,12 +146,14 @@ JSON ŞEMASI:
 
     const content1: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames];
 
-    // TÜM GÖVDEYİ cast ediyoruz -> TS şikayet etmiyor
+    // NOT: Yeni Responses API → text.format
     let resp = await openai.responses.create({
       model: DEFAULT_VISION_MODEL,
       input: [{ role: "user", content: content1 }],
       temperature: 0,
-      response_format: { type: "json_schema", json_schema: vbSchema }
+      text: {
+        format: { type: "json_schema", json_schema: vbSchema }
+      }
     } as any);
 
     let text = resp.output_text ?? "{}";
@@ -171,7 +173,9 @@ JSON ŞEMASI:
         model: DEFAULT_VISION_MODEL,
         input: [{ role: "user", content: content2 }],
         temperature: 0,
-        response_format: { type: "json_schema", json_schema: vbSchema }
+        text: {
+          format: { type: "json_schema", json_schema: vbSchema }
+        }
       } as any);
 
       text = resp.output_text ?? "{}";
