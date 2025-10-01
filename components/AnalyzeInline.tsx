@@ -49,7 +49,7 @@ export default function AnalyzeInline({
           disabled={loading}
           title="Bu video için AI analizi çalıştırır (gerekirse cache’ten getirir)"
         >
-          {loading ? 'Analiz…' : 'AI ile Analiz Et'}
+          {loading ? 'Analiz…' : 'YAPAY ZEKA ANALİZİ'}
         </button>
 
         {/* Yeniden Analiz butonu tamamen kaldırıldı */}
