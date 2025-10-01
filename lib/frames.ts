@@ -8,16 +8,14 @@ export async function extractJpegFramesBase64(
   inputPath: string,
   opts?: { fps?: string; maxFrames?: number; width?: number }
 ) {
-  const fps = opts?.fps ?? "1/3";
-  const maxFrames = opts?.maxFrames ?? 8;
-  const width = opts?.width ?? 768;
+  const fps = opts?.fps ?? "1/3";          // ~her 3 sn'de 1 kare
+  const maxFrames = opts?.maxFrames ?? 8;  // maliyet kontrol
+  const width = opts?.width ?? 768;        // ölçek küçült
 
   const outDir = path.join("/tmp", `frames_${Date.now()}`);
   await fs.mkdir(outDir, { recursive: true });
 
-  const ff = ffmpegInstaller.path;   // ← garantili binary yolu
-  console.log("FFMPEG PATH =>", ff);
-
+  const ff = ffmpegInstaller.path; // Lambda/Vercel için garantili binary yolu
   const args = [
     "-i", inputPath,
     "-vf", `fps=${fps},scale=${width}:-1`,
@@ -52,12 +50,7 @@ function run(cmd: string, args: string[]) {
     const p = spawn(cmd, args);
     let stderr = "";
     p.stderr?.on("data", d => (stderr += d.toString()));
-    p.on("error", (err) =>
-      reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`))
-    );
-    p.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `FFmpeg exit code ${code}`));
-    });
+    p.on("error", (err) => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
+    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`)));
   });
 }
