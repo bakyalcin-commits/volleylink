@@ -15,6 +15,11 @@ const ANALYZER_VERSION = 3;
 
 type VideoRow = { id: string; storage_path: string };
 
+// OpenAI vision parçası için explicit union
+type VisionPart =
+  | { type: "input_text"; text: string }
+  | { type: "input_image"; image_url: string; detail: "low" | "high" | "auto" };
+
 export async function POST(req: NextRequest) {
   const { videoId, force } = await req.json();
   if (!videoId) return NextResponse.json({ error: "videoId required" }, { status: 400 });
@@ -26,7 +31,6 @@ export async function POST(req: NextRequest) {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  // 1) Cache: boş/eskimiş ise YOK SAY
   if (!force) {
     const { data: cached } = await supabase
       .from("video_analyses")
@@ -37,11 +41,7 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    const isEmpty =
-      !cached?.report?.strengths?.length &&
-      !cached?.report?.issues?.length &&
-      !cached?.report?.drills?.length;
-
+    const isEmpty = !cached?.report?.strengths?.length && !cached?.report?.issues?.length && !cached?.report?.drills?.length;
     const isStale = (cached?.version ?? 0) !== ANALYZER_VERSION;
 
     if (cached?.report && !isEmpty && !isStale) {
@@ -53,7 +53,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 2) Aktif iş?
   const { data: active } = await supabase
     .from("video_analyses")
     .select("id")
@@ -62,18 +61,15 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (active) return NextResponse.json({ queued: true, message: "Analysis already in progress." }, { status: 202 });
 
-  // 3) Video bilgisi
   const { data: videoRow, error: vErr } = await supabase
     .from("videos")
     .select("id, storage_path")
     .eq("id", videoId)
     .maybeSingle<VideoRow>();
-
   if (vErr || !videoRow?.storage_path) {
     return NextResponse.json({ error: vErr?.message || "video not found" }, { status: 404 });
   }
 
-  // 4) Storage → /tmp
   const { data: file, error: dErr } = await supabase.storage.from(bucket).download(videoRow.storage_path);
   if (dErr || !file) return NextResponse.json({ error: dErr?.message || "download failed" }, { status: 500 });
 
@@ -81,7 +77,6 @@ export async function POST(req: NextRequest) {
   const tmpPath = path.join("/tmp", `${videoId}_${crypto.randomBytes(4).toString("hex")}.mp4`);
   await fs.writeFile(tmpPath, buf);
 
-  // 5) pending kayıt
   const { data: created, error: insErr } = await supabase
     .from("video_analyses")
     .insert({
@@ -93,24 +88,23 @@ export async function POST(req: NextRequest) {
     })
     .select()
     .single();
-
-  if (insErr || !created) {
-    return NextResponse.json({ error: insErr?.message || "insert failed" }, { status: 500 });
-  }
-
+  if (insErr || !created) return NextResponse.json({ error: insErr?.message || "insert failed" }, { status: 500 });
   const analysisId = created.id;
 
   try {
-    // 6) Kare çıkar (fps tabanlı)
+    // 1) Kareler
     const framesRaw = await extractJpegFramesBase64(tmpPath, { fps: "2", maxFrames: 8, width: 640 });
     if (!framesRaw.length) throw new Error("No frames extracted");
 
-    // İlk 2 kareyi high detail işaretle
-    const frames = framesRaw.map((f, i) => (i < 2 ? { ...f, detail: "high" as const } : f));
+    // 2) İlk 2 kare high detail
+    const frames: VisionPart[] = framesRaw.map((f, i) =>
+      i < 2 ? { type: "input_image", image_url: f.image_url, detail: "high" }
+            : { type: "input_image", image_url: f.image_url, detail: "low" }
+    );
 
     await supabase.from("video_analyses").update({ status: "processing" }).eq("id", analysisId);
 
-    // 7) GPT çağrısı (JSON-only, min 3 madde)
+    // 3) Prompt
     const prompt = `
 Sen profesyonel bir voleybol analistisın. Görüntülerde smaç/antrenman sekanslarını değerlendir.
 Aşamalar: yaklaşma, sıçrama, kol salınımı, bilek teması, iniş, core/denge, kol-bacak senkronu.
@@ -128,9 +122,11 @@ JSON ŞEMASI:
 }
 `;
 
+    const content: VisionPart[] = [{ type: "input_text", text: prompt }, ...frames];
+
     const resp = await openai.responses.create({
       model: DEFAULT_VISION_MODEL,
-      input: [{ role: "user", content: [{ type: "input_text", text: prompt }, ...frames] }],
+      input: [{ role: "user", content }],
       temperature: 0,
     });
 
@@ -138,11 +134,7 @@ JSON ŞEMASI:
     let report: VbReport = { strengths: [], issues: [], drills: [] };
     try { report = JSON.parse(text); } catch {}
 
-    const empty =
-      (!report.strengths?.length) &&
-      (!report.issues?.length) &&
-      (!report.drills?.length);
-
+    const empty = (!report.strengths?.length) && (!report.issues?.length) && (!report.drills?.length);
     if (empty) throw new Error("Model boş içerik döndürdü (frames yetersiz olabilir).");
 
     await supabase
