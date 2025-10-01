@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import type { VideoRow, Position } from '@/types/db';
+import AnalyzeInline from '@/components/AnalyzeInline'; // ← eklendi
 
 // Kod -> Etiket eşlemesi (tek kaynak)
 const POSITION_LABELS: Record<Position, string> = {
@@ -244,11 +245,20 @@ export default function DiscoverGrid({ refreshKey }: { refreshKey?: number }) {
             {v.club ? ` · ${v.club}` : ''}
           </div>
 
+          {/* Beğeni alanı */}
           <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8}}>
             <button className="button" onClick={() => toggleLike(v.id, !!v.my_like)}>
               {v.my_like ? 'Unlike' : 'Like'}
             </button>
             <span className="p">{v.like_count ?? 0} beğeni</span>
+          </div>
+
+          {/* 🔥 AI Analizi: her kartta inline buton + rapor */}
+          <div style={{marginTop:10}}>
+            <AnalyzeInline
+              videoId={String(v.id)}
+              canForce={Boolean(myId && (isAdmin || v.user_id === myId))}
+            />
           </div>
 
           {/* Yorumlar */}
