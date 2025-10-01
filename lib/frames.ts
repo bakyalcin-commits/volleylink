@@ -1,57 +1,104 @@
-// lib/frames.ts
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+'use client';
+import { useState } from 'react';
 
-export async function extractJpegFramesBase64(
-  inputPath: string,
-  opts?: { fps?: string; maxFrames?: number; width?: number }
-) {
-  const fps = opts?.fps ?? "1/3";
-  const maxFrames = opts?.maxFrames ?? 8;
-  const width = opts?.width ?? 768;
+type VbReport = { strengths: string[]; issues: string[]; drills: string[] };
 
-  const outDir = path.join("/tmp", `frames_${Date.now()}`);
-  await fs.mkdir(outDir, { recursive: true });
+export default function AnalyzeInline({ videoId, canForce = false }: { videoId: string; canForce?: boolean }) {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<VbReport | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [allowForce, setAllowForce] = useState(false); // rapor boşsa herkese force
 
-  // Dinamik import: bundler alt-modüllere takılmasın
-  const mod = await import("@ffmpeg-installer/ffmpeg");
-  const ff = (mod as any).path as string;
+  const run = async (force = false) => {
+    setLoading(true); setMsg(null);
+    try {
+      const res = await fetch('/api/analyze-video', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ videoId, force })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Analiz başarısız');
 
-  const args = [
-    "-i", inputPath,
-    "-vf", `fps=${fps},scale=${width}:-1`,
-    "-qscale:v", "3",
-    path.join(outDir, "f_%03d.jpg"),
-    "-hide_banner",
-    "-loglevel", "error"
-  ];
+      if (json.from_cache) setMsg('Önceden yapılan analiz gösteriliyor.');
+      if (json.queued) setMsg('Analiz zaten çalışıyor, birazdan hazır olur.');
 
-  await run(ff, args);
+      if (json.report) {
+        setReport(json.report);
+        const empty =
+          (!json.report.strengths || json.report.strengths.length === 0) &&
+          (!json.report.issues || json.report.issues.length === 0) &&
+          (!json.report.drills || json.report.drills.length === 0);
+        setAllowForce(empty);
+      }
+      setOpen(true);
+    } catch (e:any) {
+      setMsg(e.message || 'Analiz başarısız. Videodan yeterli kare çıkarılamadı.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const files = (await fs.readdir(outDir))
-    .filter(f => f.endsWith(".jpg"))
-    .sort()
-    .slice(0, maxFrames);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-8">
+        <button
+          className="px-3 py-1.5 rounded bg-black text-white text-sm"
+          onClick={() => run(false)}
+          disabled={loading}
+          title="Bu video için AI analizi çalıştır veya cache’ten getirir"
+        >
+          {loading ? 'Analiz…' : 'AI ile Analiz Et'}
+        </button>
 
-  const images: { type: "input_image"; image_url: string; detail: "low" }[] = [];
-  for (const f of files) {
-    const b = await fs.readFile(path.join(outDir, f));
-    images.push({
-      type: "input_image",
-      image_url: `data:image/jpeg;base64,${b.toString("base64")}`,
-      detail: "low",
-    });
-  }
-  return images;
+        {(canForce || allowForce) && (
+          <button
+            className="px-3 py-1.5 rounded border text-sm"
+            onClick={() => run(true)}
+            disabled={loading}
+            title="Yeni sürüm üret (cache’i atlar)"
+          >
+            Yeniden Analiz
+          </button>
+        )}
+
+        {report && (
+          <button
+            className="text-sm underline"
+            onClick={() => setOpen((v) => !v)}
+            title="Rapor panelini aç/kapat"
+          >
+            {open ? 'Raporu Gizle' : 'Raporu Göster'}
+          </button>
+        )}
+      </div>
+
+      {msg && <div className="text-xs text-amber-600">{msg}</div>}
+
+      {open && report && (
+        <div className="grid md:grid-cols-3 gap-3 border rounded p-3 bg-black/5">
+          <Section title="Güçlü Yanlar" items={report.strengths} />
+          <Section title="Geliştirme Alanları" items={report.issues} />
+          <Section title="Drill Önerileri" items={report.drills} />
+        </div>
+      )}
+    </div>
+  );
 }
 
-function run(cmd: string, args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const p = spawn(cmd, args);
-    let stderr = "";
-    p.stderr?.on("data", d => (stderr += d.toString()));
-    p.on("error", err => reject(new Error(`FFmpeg spawn hatası: ${(err as Error).message}`)));
-    p.on("close", code => (code === 0 ? resolve() : reject(new Error(stderr || `FFmpeg exit code ${code}`))));
-  });
+function Section({ title, items }: { title:string; items:string[] }) {
+  const has = Array.isArray(items) && items.length > 0;
+  return (
+    <div>
+      <div className="font-semibold mb-1 text-sm">{title}</div>
+      {has ? (
+        <ul className="list-disc pl-5 text-xs space-y-1">
+          {items.map((t, i) => <li key={i}>{t}</li>)}
+        </ul>
+      ) : (
+        <div className="text-xs opacity-70">Veri üretilemedi.</div>
+      )}
+    </div>
+  );
 }
