@@ -16,8 +16,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="container">
           <nav>
-            <Link href="/" aria-label="VolleyLink anasayfa"
-              style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Link
+              href="/"
+              aria-label="VolleyLink anasayfa"
+              style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+            >
               <Image
                 src="/volleylink.png"
                 alt="VolleyLink"
@@ -30,8 +33,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
             <div className="right">
               <a href="#discover">Keşfet</a>
-              <a href="#how">Nasıl Çalışır?</a>
-              <a href="#verify">Doğrulama</a>
               <a className="button" href="#auth">Giriş / Kayıt</a>
             </div>
           </nav>
