@@ -3,8 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: {
     typedRoutes: false,
-    serverComponentsExternalPackages: ['@ffmpeg-installer/ffmpeg'], // ⬅️ eklendi
+    serverComponentsExternalPackages: ['@ffmpeg-installer/ffmpeg'],
   },
 };
-
 module.exports = nextConfig;
