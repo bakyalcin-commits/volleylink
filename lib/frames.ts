@@ -1,64 +1,60 @@
 // lib/frames.ts
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { spawn } from "child_process";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
-type ExtractOpts = {
-  fps?: string;      // örn "2" ya da "0.5"
-  maxFrames?: number;
-  width?: number;    // hedef genişlik
-};
+const ffmpegPath = ffmpegInstaller.path;
 
+/**
+ * Videodan JPEG kareleri çıkarıp base64 olarak döndürür.
+ * fps tabanlı örnekleme: varsayılan fps="2", en fazla 8 kare, width=640.
+ */
 export async function extractJpegFramesBase64(
   videoPath: string,
-  opts: ExtractOpts = {}
-): Promise<{ image_url: string }[]> {
-  const fps = opts.fps ?? "2";
-  const maxFrames = Math.max(1, Math.min(opts.maxFrames ?? 24, 64));
-  const width = Math.max(256, Math.min(opts.width ?? 896, 1920));
+  opts: { fps?: string; maxFrames?: number; width?: number } = {}
+): Promise<{ type: "input_image"; image_url: string; detail: "low" | "high" | "auto" }[]> {
+  const { fps = "2", maxFrames = 8, width = 640 } = opts;
 
-  const ffmpegPath =
-    process.env.FFMPEG_PATH ||
-    (require("ffmpeg-static") as string) ||
-    "ffmpeg";
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-i", videoPath,
+      "-vf", `fps=${fps},scale=${width}:-1`,
+      "-vframes", String(maxFrames),
+      "-f", "image2pipe",
+      "-vcodec", "mjpeg",
+      "pipe:1",
+    ];
 
-  const outDir = path.join("/tmp", "vb_frames_" + Date.now());
-  await fs.mkdir(outDir, { recursive: true });
+    const ffmpeg = spawn(ffmpegPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
-  await new Promise<void>((resolve, reject) => {
-    const ff = spawn(
-      ffmpegPath,
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        videoPath,
-        "-vf",
-        `fps=${fps},scale=${width}:-2`,
-        "-frames:v",
-        String(maxFrames),
-        path.join(outDir, "f_%03d.jpg")
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] }
-    );
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (d) => (stderr += d.toString()));
+    ffmpeg.on("error", (err) => reject(err));
 
-    let err = "";
-    ff.stderr.on("data", (d) => (err += d.toString()));
-    ff.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(err || `ffmpeg exited with code ${code}`));
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) return reject(new Error(stderr || `ffmpeg exited with code ${code}`));
+
+      const buffer = Buffer.concat(chunks);
+
+      // JPEG başlangıç işareti: FF D8 FF
+      const frames: Buffer[] = [];
+      let start = -1;
+      for (let i = 0; i < buffer.length - 2; i++) {
+        if (buffer[i] === 0xff && buffer[i + 1] === 0xd8 && buffer[i + 2] === 0xff) {
+          if (start !== -1) frames.push(buffer.slice(start, i));
+          start = i;
+        }
+      }
+      if (start !== -1) frames.push(buffer.slice(start));
+
+      const base64Frames = frames.map((buf) => ({
+        type: "input_image" as const,
+        image_url: `data:image/jpeg;base64,${buf.toString("base64")}`,
+        detail: "low" as const, // DİKKAT: her karede detail VAR
+      }));
+
+      resolve(base64Frames);
     });
   });
-
-  const files = (await fs.readdir(outDir)).filter(f => f.endsWith(".jpg")).sort();
-
-  const frames: { image_url: string }[] = [];
-  for (const f of files) {
-    const bin = await fs.readFile(path.join(outDir, f));
-    frames.push({ image_url: `data:image/jpeg;base64,${bin.toString("base64")}` });
-  }
-
-  try { await fs.rm(outDir, { recursive: true, force: true }); } catch {}
-  return frames;
 }
