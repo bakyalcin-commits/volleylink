@@ -32,7 +32,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
 
             <div className="right">
-              <a href="#discover">Keşfet</a>
               <a className="button" href="#auth">Giriş / Kayıt</a>
             </div>
           </nav>
