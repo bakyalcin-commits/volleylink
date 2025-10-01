@@ -1,4 +1,7 @@
 // app/api/analyze-video/route.ts
+export const runtime = "nodejs";         // Edge değil
+export const dynamic = "force-dynamic";  // cache yok / serverless
+export const maxDuration = 60;           // (opsiyonel) Vercel time limit artırımı
 import { NextRequest, NextResponse } from "next/server";
 import { openai, DEFAULT_VISION_MODEL, VbReport } from "@/lib/openai";
 import { createClient } from "@supabase/supabase-js";
